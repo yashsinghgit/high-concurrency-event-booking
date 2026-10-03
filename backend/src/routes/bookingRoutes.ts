@@ -19,6 +19,7 @@ router.post("/", async (req, res) => {
       FROM show_seats
       WHERE show_id = $1
         AND seat_id = ANY($2)
+      FOR UPDATE
       `,
       [showId, seatIds]
     );
