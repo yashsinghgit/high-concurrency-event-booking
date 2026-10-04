@@ -94,4 +94,99 @@ router.post("/", async (req, res) => {
   }
 });
 
+router.delete("/:bookingId", async (req, res) => {
+  const client = await pool.connect();
+
+  try{
+    const {bookingId} = req.params;
+    const {userId} = req.body;
+
+    // Start transaction
+    await client.query("BEGIN");
+
+    const booking = await client.query(
+      `
+      SELECT * FROM bookings
+      WHERE id = $1 AND user_id = $2
+      FOR UPDATE
+      `,
+      [bookingId, userId]
+    );
+
+    if(booking.rows.length === 0){
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        message: "Booking not found"
+      });
+    }
+    if(booking.rows[0].status !== "CONFIRMED") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        message: "Booking cannot be cancelled"
+      });
+    }
+
+    const showId = booking.rows[0].show_id;
+
+    const seats = await client.query(
+      `
+      SELECT seat_id FROM booking_seats
+      WHERE booking_id = $1
+      `,
+      [bookingId]
+    );
+
+    const seatIds = seats.rows.map(row => row.seat_id);
+
+    if(seatIds.length > 0){
+      await client.query(
+        `
+        SELECT seat_id FROM show_seats
+        WHERE show_id = $1 AND seat_id = ANY($2)
+        FOR UPDATE
+        `,
+        [showId, seatIds]
+      );
+
+      await client.query(
+        `
+        UPDATE show_seats
+        SET status = 'AVAILABLE'
+        WHERE show_id = $1 AND seat_id = ANY($2)
+        `,
+        [showId, seatIds]
+      );
+    }
+
+    await client.query(
+      `
+      UPDATE bookings
+      SET status = 'CANCELLED'
+      WHERE id = $1
+      `,
+      [bookingId]
+    );
+
+    await client.query("COMMIT");
+
+    res.status(200).json({
+      message: "Booking cancelled successfully",
+      bookingId: bookingId,
+      releasedSeats: seatIds
+    });
+
+  } catch (error) {
+    await client.query("ROLLBACK");
+
+    console.error(error);
+
+    res.status(500).json({
+      message: "Failed to cancel booking"
+    });
+
+  } finally {
+    client.release(); 
+  }
+
+});
 export default router;
