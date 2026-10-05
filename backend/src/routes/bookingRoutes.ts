@@ -1,18 +1,24 @@
 import { Router } from "express";
 import { pool } from "../db.js";
+import { AuthRequest } from "../middleware/authMiddleware.js";
 
 const router = Router();
 
-router.post("/", async (req, res) => {
+router.post("/", async (req: AuthRequest, res) => {
   const client = await pool.connect();
 
   try {
-    const { userId, showId, seatIds } = req.body;
+    const { showId, seatIds } = req.body;
+    const userId = req.user?.userId;
 
-    // Start transaction
+    if (!userId) {
+      return res.status(401).json({
+        message: "Authentication required"
+      });
+    }
+
     await client.query("BEGIN");
 
-    // 1. Check requested seats
     const seats = await client.query(
       `
       SELECT seat_id, status
@@ -24,7 +30,6 @@ router.post("/", async (req, res) => {
       [showId, seatIds]
     );
 
-    // 2. Make sure ALL requested seats are available
     if (
       seats.rows.length !== seatIds.length ||
       seats.rows.some((seat) => seat.status !== "AVAILABLE")
@@ -36,7 +41,6 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // 3. Create booking
     const booking = await client.query(
       `
       INSERT INTO bookings (user_id, show_id, status)
@@ -48,7 +52,6 @@ router.post("/", async (req, res) => {
 
     const bookingId = booking.rows[0].id;
 
-    // 4. Create booking_seats
     for (const seatId of seatIds) {
       await client.query(
         `
@@ -60,7 +63,6 @@ router.post("/", async (req, res) => {
       );
     }
 
-    // 5. Mark seats as BOOKED
     await client.query(
       `
       UPDATE show_seats
@@ -71,7 +73,6 @@ router.post("/", async (req, res) => {
       [showId, seatIds]
     );
 
-    // Everything succeeded
     await client.query("COMMIT");
 
     res.status(201).json({
@@ -80,7 +81,6 @@ router.post("/", async (req, res) => {
     });
 
   } catch (error) {
-    // Something failed → undo everything
     await client.query("ROLLBACK");
 
     console.error(error);
@@ -88,39 +88,50 @@ router.post("/", async (req, res) => {
     res.status(500).json({
       message: "Booking failed"
     });
+
   } finally {
-    // Return connection to the pool
     client.release();
   }
 });
 
-router.delete("/:bookingId", async (req, res) => {
+
+router.delete("/:bookingId", async (req: AuthRequest, res) => {
   const client = await pool.connect();
 
-  try{
-    const {bookingId} = req.params;
-    const {userId} = req.body;
+  try {
+    const { bookingId } = req.params;
+    const userId = req.user?.userId;
 
-    // Start transaction
+    if (!userId) {
+      return res.status(401).json({
+        message: "Authentication required"
+      });
+    }
+
     await client.query("BEGIN");
 
     const booking = await client.query(
       `
-      SELECT * FROM bookings
-      WHERE id = $1 AND user_id = $2
+      SELECT id, user_id, show_id, status
+      FROM bookings
+      WHERE id = $1
+        AND user_id = $2
       FOR UPDATE
       `,
       [bookingId, userId]
     );
 
-    if(booking.rows.length === 0){
+    if (booking.rows.length === 0) {
       await client.query("ROLLBACK");
+
       return res.status(404).json({
         message: "Booking not found"
       });
     }
-    if(booking.rows[0].status !== "CONFIRMED") {
+
+    if (booking.rows[0].status !== "CONFIRMED") {
       await client.query("ROLLBACK");
+
       return res.status(400).json({
         message: "Booking cannot be cancelled"
       });
@@ -130,19 +141,23 @@ router.delete("/:bookingId", async (req, res) => {
 
     const seats = await client.query(
       `
-      SELECT seat_id FROM booking_seats
+      SELECT seat_id
+      FROM booking_seats
       WHERE booking_id = $1
+        AND show_id = $2
       `,
-      [bookingId]
+      [bookingId, showId]
     );
 
-    const seatIds = seats.rows.map(row => row.seat_id);
+    const seatIds = seats.rows.map((seat) => seat.seat_id);
 
-    if(seatIds.length > 0){
+    if (seatIds.length > 0) {
       await client.query(
         `
-        SELECT seat_id FROM show_seats
-        WHERE show_id = $1 AND seat_id = ANY($2)
+        SELECT seat_id
+        FROM show_seats
+        WHERE show_id = $1
+          AND seat_id = ANY($2)
         FOR UPDATE
         `,
         [showId, seatIds]
@@ -152,7 +167,8 @@ router.delete("/:bookingId", async (req, res) => {
         `
         UPDATE show_seats
         SET status = 'AVAILABLE'
-        WHERE show_id = $1 AND seat_id = ANY($2)
+        WHERE show_id = $1
+          AND seat_id = ANY($2)
         `,
         [showId, seatIds]
       );
@@ -169,9 +185,9 @@ router.delete("/:bookingId", async (req, res) => {
 
     await client.query("COMMIT");
 
-    res.status(200).json({
+    res.json({
       message: "Booking cancelled successfully",
-      bookingId: bookingId,
+      bookingId,
       releasedSeats: seatIds
     });
 
@@ -181,12 +197,13 @@ router.delete("/:bookingId", async (req, res) => {
     console.error(error);
 
     res.status(500).json({
-      message: "Failed to cancel booking"
+      message: "Cancellation failed"
     });
 
   } finally {
-    client.release(); 
+    client.release();
   }
-
 });
+
+
 export default router;

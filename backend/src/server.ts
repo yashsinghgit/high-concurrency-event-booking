@@ -4,15 +4,17 @@ import eventRoutes from "./routes/eventRoutes";
 import showRoutes from "./routes/showRoutes";
 import seatRoutes from "./routes/seatRoutes";
 import bookingRoutes from "./routes/bookingRoutes";
-
+import authRoutes from "./routes/authRoutes";
+import { authenticate } from "./middleware/authMiddleware";
 
 const app = express();
 
 app.use(express.json());
 app.use("/api/events", eventRoutes); 
 app.use("/api/shows", showRoutes); 
-app.use("/api/shows", seatRoutes);
-app.use("/api/bookings", bookingRoutes);
+app.use("/api/seats", seatRoutes);
+app.use("/api/bookings", authenticate, bookingRoutes);
+app.use("/api/auth", authRoutes);
 
 
 app.get("/health", async (req, res) => {
