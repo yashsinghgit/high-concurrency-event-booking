@@ -5,7 +5,49 @@ import { AuthRequest } from "../middleware/authMiddleware.js";
 const router = Router();
 
 router.post("/", async (req: AuthRequest, res) => {
+  const { showId, seatIds } = req.body;
+  const userId = req.user?.userId;
+
+  if (!userId) {
+    return res.status(401).json({
+      message: "Authentication required"
+    });
+  }
+
+  const parsedShowId = Number(showId);
+
+  if (!Number.isInteger(parsedShowId) || parsedShowId <= 0) {
+    return res.status(400).json({
+      message: "showId must be a positive integer"
+    });
+  }
+
+  if (!Array.isArray(seatIds) || seatIds.length === 0) {
+    return res.status(400).json({
+      message: "seatIds must be a non-empty array"
+    });
+  }
+
+  const parsedSeatIds = seatIds.map(Number);
+
+  if (
+    parsedSeatIds.some(
+      (seatId) => !Number.isInteger(seatId) || seatId <= 0
+    )
+  ) {
+    return res.status(400).json({
+      message: "seatIds must contain only positive integers"
+    });
+  }
+
+  if (new Set(parsedSeatIds).size !== parsedSeatIds.length) {
+    return res.status(400).json({
+      message: "Duplicate seat IDs are not allowed"
+    });
+  }
+
   const client = await pool.connect();
+
 
   try {
     const { showId, seatIds } = req.body;
