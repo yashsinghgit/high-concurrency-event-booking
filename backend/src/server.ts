@@ -7,16 +7,32 @@ import bookingRoutes from "./routes/bookingRoutes";
 import authRoutes from "./routes/authRoutes";
 import { authenticate } from "./middleware/authMiddleware";
 import { startIdempotencyCleanup } from "./jobs/idempotencyCleanup";
+import {
+  generalLimiter,
+  loginLimiter,
+  registerLimiter,
+  bookingLimiter,
+} from "./middleware/rateLimiters.js";
 
 const app = express();
 
 app.use(express.json());
-app.use("/api/events", eventRoutes); 
-app.use("/api/shows", showRoutes); 
-app.use("/api/seats", seatRoutes);
-app.use("/api/bookings", authenticate, bookingRoutes);
-app.use("/api/auth", authRoutes);
 
+// Broad limit for all API requests
+app.use(generalLimiter);
+
+// Stricter limits for authentication endpoints
+app.use("/api/auth/login", loginLimiter);
+app.use("/api/auth/register", registerLimiter);
+
+app.use("/api/events", eventRoutes);
+app.use("/api/shows", showRoutes);
+app.use("/api/seats", seatRoutes);
+
+// Limit booking attempts before authentication and booking logic
+app.use("/api/bookings", bookingLimiter, authenticate, bookingRoutes);
+
+app.use("/api/auth", authRoutes);
 
 app.get("/health", async (req, res) => {
     try {
