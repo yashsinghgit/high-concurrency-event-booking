@@ -6,6 +6,7 @@ import seatRoutes from "./routes/seatRoutes";
 import bookingRoutes from "./routes/bookingRoutes";
 import authRoutes from "./routes/authRoutes";
 import { authenticate } from "./middleware/authMiddleware";
+import { startIdempotencyCleanup } from "./jobs/idempotencyCleanup";
 
 const app = express();
 
@@ -35,3 +36,4 @@ app.get("/health", async (req, res) => {
 app.listen(5000, () => {
   console.log("Server running on http://localhost:5000");
 });
+startIdempotencyCleanup();
